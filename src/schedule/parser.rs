@@ -33,7 +33,7 @@ impl Schedule {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Step {
     pub cmd: String,
     pub time: Option<TimeSpec>,
@@ -41,13 +41,13 @@ pub struct Step {
     pub on_fail: OnFail,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TimeSpec {
     Absolute(DateTime<Utc>),
     Relative { variable: String, offset: TimeDelta },
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub enum OnFail {
     #[default]
     Abort,
