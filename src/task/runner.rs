@@ -11,8 +11,8 @@ use tokio::time::{Duration, sleep};
 use tokio::{spawn, task};
 use tracing::{info, warn};
 
-use crate::schedule::parser::{OnFail, Schedule, Step, TimeSpec};
-use crate::schedule::utils::{resolve_time, resolve_variables, substitute_variables};
+use crate::task::parser::{OnFail, Step, Task, TimeSpec};
+use crate::task::utils::{resolve_time, resolve_variables, substitute_variables};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -71,7 +71,7 @@ impl From<&StepOutcome> for Option<AbortReason> {
     }
 }
 
-pub async fn run(schedule: Schedule, config: RunConfig) -> Result<RunOutcome, Error> {
+pub async fn run(task: Task, config: RunConfig) -> Result<RunOutcome, Error> {
     // Create artifact directory
     let dir_name = Utc::now().format("%Y%m%d_%H%M%S").to_string();
     let artifact_dir = config.artifact_base.join(&dir_name);
@@ -82,7 +82,7 @@ pub async fn run(schedule: Schedule, config: RunConfig) -> Result<RunOutcome, Er
     info!(?artifact_dir, "created artifact directory");
 
     // Resolve variables (evaluate ${...} shell commands)
-    let mut vars = schedule.variables;
+    let mut vars = task.variables;
     resolve_variables(&mut vars, &artifact_dir)
         .await
         .map_err(Error::VariableResolveIo)?;
@@ -109,10 +109,10 @@ pub async fn run(schedule: Schedule, config: RunConfig) -> Result<RunOutcome, Er
     sleep_until(start_time).await;
 
     // Run main steps with end-time deadline
-    let step_outcomes = run_steps(schedule.steps, &vars, &artifact_dir, end_time).await;
+    let step_outcomes = run_steps(task.steps, &vars, &artifact_dir, end_time).await;
 
     // Cleanup steps
-    let _ = run_steps(schedule.cleanup, &vars, &artifact_dir, None).await;
+    let _ = run_steps(task.cleanup, &vars, &artifact_dir, None).await;
 
     Ok(RunOutcome {
         artifact_dir,
@@ -120,6 +120,7 @@ pub async fn run(schedule: Schedule, config: RunConfig) -> Result<RunOutcome, Er
     })
 }
 
+/// Spawns a step runner and monitors the outcome of each task, returning a Vec of StepOutcomes.
 async fn run_steps(
     steps: Vec<Step>,
     vars: &HashMap<String, String>,
@@ -181,6 +182,10 @@ async fn run_steps(
     outcomes
 }
 
+/// Spawns tasks at their configured time, waiting for completion if necessary, and sends outcomes
+/// to `outcome_tx`.
+///
+/// Returns a Vec of JoinHandles for tasks that are not yet completed (i.e. non-waited tasks.)
 async fn spawn_steps(
     steps: Vec<Step>,
     vars: HashMap<String, String>,
@@ -361,14 +366,14 @@ fn spawn_command(cmd: &str, cwd: &Path) -> std::io::Result<tokio::process::Child
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schedule::parser::{OnFail, Schedule, Step, TimeSpec};
+    use crate::task::parser::{OnFail, Step, Task, TimeSpec};
     use chrono::TimeDelta;
     use tracing_test::traced_test;
 
     // --- Integration tests ---
 
-    fn make_schedule(steps: Vec<Step>, cleanup: Vec<Step>) -> Schedule {
-        Schedule {
+    fn make_task(steps: Vec<Step>, cleanup: Vec<Step>) -> Task {
+        Task {
             variables: HashMap::new(),
             steps,
             cleanup,
@@ -411,18 +416,18 @@ mod tests {
         }
     }
 
-    async fn run_with_tempdir(schedule: Schedule) -> RunOutcome {
+    async fn run_with_tempdir(task: Task) -> RunOutcome {
         let temp = tempfile::tempdir().expect("failed to create temp dir");
         let config = RunConfig {
             artifact_base: temp.path().to_path_buf(),
         };
-        run(schedule, config).await.expect("run should succeed")
+        run(task, config).await.expect("run should succeed")
     }
 
     #[tokio::test]
     async fn simple_echo_step() {
-        let schedule = make_schedule(vec![waited("echo hello")], vec![]);
-        let outcome = run_with_tempdir(schedule).await;
+        let task = make_task(vec![waited("echo hello")], vec![]);
+        let outcome = run_with_tempdir(task).await;
         assert_eq!(outcome.step_outcomes.len(), 1);
         assert!(matches!(
             &outcome.step_outcomes[0],
@@ -434,8 +439,8 @@ mod tests {
     #[traced_test]
     async fn wait_true_blocks_until_complete() {
         // Use a command that takes a moment but succeeds
-        let schedule = make_schedule(vec![waited("sleep 0.1 && echo done")], vec![]);
-        let outcome = run_with_tempdir(schedule).await;
+        let task = make_task(vec![waited("sleep 0.1 && echo done")], vec![]);
+        let outcome = run_with_tempdir(task).await;
         assert!(matches!(
             &outcome.step_outcomes[0],
             StepOutcome::Completed { status, .. } if status.success()
@@ -445,8 +450,8 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn on_fail_abort_stops_execution() {
-        let schedule = make_schedule(vec![waited("false"), waited("echo should not run")], vec![]);
-        let outcome = run_with_tempdir(schedule).await;
+        let task = make_task(vec![waited("false"), waited("echo should not run")], vec![]);
+        let outcome = run_with_tempdir(task).await;
         // Only one step outcome (the failed one); second step was skipped
         assert_eq!(outcome.step_outcomes.len(), 1);
         assert!(matches!(
@@ -458,11 +463,11 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn on_fail_continue_proceeds() {
-        let schedule = make_schedule(
+        let task = make_task(
             vec![waited_continue("false"), waited("echo still running")],
             vec![],
         );
-        let outcome = run_with_tempdir(schedule).await;
+        let outcome = run_with_tempdir(task).await;
         assert!(matches!(
             &outcome.step_outcomes[0],
             StepOutcome::Completed { status, .. } if !status.success()
@@ -478,7 +483,7 @@ mod tests {
     async fn on_fail_retry_succeeds_eventually() {
         // This command fails the first time (file doesn't exist),
         // creates the file, then succeeds on retry.
-        let schedule = Schedule {
+        let task = Task {
             variables: HashMap::new(),
             steps: vec![waited_retry(
                 "test -f attempt_marker || { touch attempt_marker; false; }",
@@ -487,7 +492,7 @@ mod tests {
             cleanup: vec![waited("rm -f attempt_marker")],
         };
 
-        let outcome = run_with_tempdir(schedule).await;
+        let outcome = run_with_tempdir(task).await;
         assert_eq!(outcome.step_outcomes.len(), 1);
         assert!(matches!(
             &outcome.step_outcomes[0],
@@ -497,13 +502,13 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_always_runs_after_abort() {
-        let schedule = make_schedule(vec![waited("false")], vec![waited("touch cleanup_ran")]);
+        let task = make_task(vec![waited("false")], vec![waited("touch cleanup_ran")]);
 
         let temp = std::env::temp_dir().join(format!("sat-o-mat-cleanup-{}", std::process::id()));
         let config = RunConfig {
             artifact_base: temp.clone(),
         };
-        let outcome = run(schedule, config).await.expect("run should succeed");
+        let outcome = run(task, config).await.expect("run should succeed");
         assert!(outcome.aborted());
         // Cleanup should have run -- check for the file in the artifact dir
         assert!(outcome.artifact_dir.join("cleanup_ran").exists());
@@ -516,14 +521,14 @@ mod tests {
     async fn end_time_deadline_kills_long_step() {
         // End time 1 second from now; step sleeps 60 seconds
         let end = Utc::now() + TimeDelta::seconds(1);
-        let schedule = Schedule {
+        let task = Task {
             variables: HashMap::from([("end".into(), end.to_rfc3339())]),
             steps: vec![waited("sleep 60")],
             cleanup: vec![],
         };
 
         let start = std::time::Instant::now();
-        let outcome = run_with_tempdir(schedule).await;
+        let outcome = run_with_tempdir(task).await;
         let elapsed = start.elapsed();
 
         assert!(outcome.aborted());
@@ -534,25 +539,25 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn shell_variable_resolution() {
-        let schedule = Schedule {
+        let task = Task {
             variables: HashMap::from([("greeting".into(), "${echo hello}".into())]),
             steps: vec![waited("echo $greeting")],
             cleanup: vec![],
         };
-        let outcome = run_with_tempdir(schedule).await;
+        let outcome = run_with_tempdir(task).await;
         assert!(!outcome.aborted());
         assert_eq!(outcome.step_outcomes.len(), 1);
     }
 
     #[tokio::test]
     async fn artifact_directory_is_created() {
-        let schedule = make_schedule(vec![waited("pwd")], vec![]);
+        let task = make_task(vec![waited("pwd")], vec![]);
 
         let temp = std::env::temp_dir().join(format!("sat-o-mat-artifact-{}", std::process::id()));
         let config = RunConfig {
             artifact_base: temp.clone(),
         };
-        let outcome = run(schedule, config).await.expect("run should succeed");
+        let outcome = run(task, config).await.expect("run should succeed");
         assert!(outcome.artifact_dir.exists());
         assert!(outcome.artifact_dir.starts_with(&temp));
 
@@ -561,8 +566,8 @@ mod tests {
 
     #[tokio::test]
     async fn background_step_returns_spawned() {
-        let schedule = make_schedule(vec![step("sleep 0.1")], vec![]);
-        let outcome = run_with_tempdir(schedule).await;
+        let task = make_task(vec![step("sleep 0.1")], vec![]);
+        let outcome = run_with_tempdir(task).await;
         assert_eq!(outcome.step_outcomes.len(), 1);
         assert!(matches!(
             &outcome.step_outcomes[0],
@@ -593,10 +598,10 @@ mod tests {
     async fn background_abort_on_fail_stops_execution() {
         // Background step exits immediately with failure; the next step is a
         // long wait that should be interrupted by the background failure.
-        let schedule = make_schedule(vec![background_abort("false"), waited("sleep 60")], vec![]);
+        let task = make_task(vec![background_abort("false"), waited("sleep 60")], vec![]);
 
         let start = std::time::Instant::now();
-        let outcome = run_with_tempdir(schedule).await;
+        let outcome = run_with_tempdir(task).await;
         let elapsed = start.elapsed();
 
         assert!(outcome.aborted());
@@ -607,18 +612,18 @@ mod tests {
     #[tokio::test]
     async fn background_continue_on_fail_does_not_abort() {
         // Background step fails with on_fail: continue — execution should proceed.
-        let schedule = make_schedule(
+        let task = make_task(
             vec![background_continue("false"), waited("echo still here")],
             vec![],
         );
-        let outcome = run_with_tempdir(schedule).await;
+        let outcome = run_with_tempdir(task).await;
         assert!(!outcome.aborted());
     }
 
     #[tokio::test]
     #[traced_test]
     async fn aborting_background_step_prevents_future_timed_step_spawn() {
-        let schedule = Schedule {
+        let task = Task {
             variables: HashMap::new(),
             steps: vec![
                 background_abort("false"),
@@ -635,7 +640,7 @@ mod tests {
             cleanup: vec![],
         };
 
-        let outcome = run_with_tempdir(schedule).await;
+        let outcome = run_with_tempdir(task).await;
         assert!(outcome.aborted());
         assert_eq!(outcome.step_outcomes.len(), 1);
         assert!(!outcome.artifact_dir.join("spawned_after_abort").exists());

@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use tokio::{io, process::Command};
 use tracing::info;
 
-use crate::schedule::parser::TimeSpec;
+use crate::task::parser::TimeSpec;
 
 /// Evaluate `${shell cmd}` variable values in-place; leave unchanged on error or plain strings.
 pub async fn resolve_variables(vars: &mut HashMap<String, String>, cwd: &Path) -> io::Result<()> {

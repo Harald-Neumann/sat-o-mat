@@ -14,7 +14,7 @@ pub enum Error {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Schedule {
+pub struct Task {
     #[serde(default)]
     pub variables: HashMap<String, String>,
     #[serde(default)]
@@ -23,9 +23,9 @@ pub struct Schedule {
     pub cleanup: Vec<Step>,
 }
 
-impl Schedule {
+impl Task {
     pub fn from_yaml_str(yaml: &str) -> Result<Self, Error> {
-        let schedule: Schedule = serde_yaml::from_str(yaml)?;
+        let schedule: Task = serde_yaml::from_str(yaml)?;
         if !schedule.variables.contains_key("end") {
             return Err(Error::MissingVariable("end"));
         }
@@ -185,7 +185,7 @@ cleanup:
 
     #[test]
     fn parse_full_schedule() {
-        let sched = Schedule::from_yaml_str(FULL_YAML).unwrap();
+        let sched = Task::from_yaml_str(FULL_YAML).unwrap();
         assert_eq!(sched.variables["start"], "2026-01-12T10:00:00Z");
         assert_eq!(sched.steps.len(), 2);
         assert_eq!(sched.cleanup.len(), 1);
@@ -207,7 +207,7 @@ cleanup:
     fn missing_end_variable() {
         let yaml = "variables:\n  start: '2026-01-01T00:00:00Z'\nsteps: []\n";
         assert!(matches!(
-            Schedule::from_yaml_str(yaml),
+            Task::from_yaml_str(yaml),
             Err(Error::MissingVariable("end"))
         ));
     }
@@ -267,7 +267,7 @@ steps:
     waait: true
 "#;
 
-        let err = Schedule::from_yaml_str(yaml).unwrap_err();
+        let err = Task::from_yaml_str(yaml).unwrap_err();
         match err {
             Error::Yaml(e) => assert!(e.to_string().contains("unknown field")),
             _ => panic!("expected yaml error"),
