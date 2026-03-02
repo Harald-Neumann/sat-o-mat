@@ -11,7 +11,7 @@ use tokio::time::{Duration, sleep};
 use tokio::{spawn, task};
 use tracing::{info, warn};
 
-use crate::task::parser::{OnFail, Step, Task, TimeSpec};
+use crate::task::format::{OnFail, Step, Task, TimeSpec};
 use crate::task::utils::{resolve_time, resolve_variables, substitute_variables};
 
 #[derive(Debug, thiserror::Error)]
@@ -366,7 +366,7 @@ fn spawn_command(cmd: &str, cwd: &Path) -> std::io::Result<tokio::process::Child
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::parser::{OnFail, Step, Task, TimeSpec};
+    use crate::task::format::{OnFail, Step, Task, TimeSpec};
     use chrono::TimeDelta;
     use tracing_test::traced_test;
 

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use sat_o_mat::task::parser::Task;
+use sat_o_mat::task::format::Task;
 use sat_o_mat::task::runner::{RunConfig, run};
 
 #[tokio::main]
