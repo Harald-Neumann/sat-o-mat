@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use serde::Deserialize;
+use serde::Serialize;
 use serde::de;
+use serde::ser::{self, SerializeMap};
 use serde_yaml::Value;
 
 #[derive(Debug, thiserror::Error)]
@@ -13,7 +15,7 @@ pub enum Error {
     MissingVariable(&'static str),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Task {
     #[serde(default)]
     pub variables: HashMap<String, String>,
@@ -151,6 +153,59 @@ impl<'de> Deserialize<'de> for OnFail {
             }
             _ => Err(de::Error::custom(format!("invalid on_fail: {s}"))),
         }
+    }
+}
+
+// --- serialization ---
+
+impl Serialize for OnFail {
+    fn serialize<S: ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let s = match self {
+            OnFail::Abort => "abort",
+            OnFail::Continue => "continue",
+            OnFail::Retry(n) => &format!("retry({n})"),
+        };
+        serializer.serialize_str(s)
+    }
+}
+
+impl Serialize for TimeSpec {
+    fn serialize<S: ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let s = match self {
+            TimeSpec::Absolute(dt) => dt.to_rfc3339(),
+            TimeSpec::Relative { variable, offset } => {
+                let (sign, abs_offset) = if *offset < TimeDelta::zero() {
+                    ("-", -*offset)
+                } else {
+                    ("+", *offset)
+                };
+                let dur = abs_offset.to_std().map_err(ser::Error::custom)?;
+                format!("{variable}{sign}{}", humantime::format_duration(dur))
+            }
+        };
+        serializer.serialize_str(&s)
+    }
+}
+
+impl Serialize for Step {
+    fn serialize<S: ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let is_simple = self.time.is_none() && !self.wait && matches!(self.on_fail, OnFail::Abort);
+        if is_simple {
+            return serializer.serialize_str(&self.cmd);
+        }
+
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("cmd", &self.cmd)?;
+        if let Some(time) = &self.time {
+            map.serialize_entry("time", time)?;
+        }
+        if self.wait {
+            map.serialize_entry("wait", &self.wait)?;
+        }
+        if !matches!(self.on_fail, OnFail::Abort) {
+            map.serialize_entry("on_fail", &self.on_fail)?;
+        }
+        map.end()
     }
 }
 
