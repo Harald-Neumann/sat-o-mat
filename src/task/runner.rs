@@ -73,8 +73,7 @@ impl From<&StepOutcome> for Option<AbortReason> {
 
 pub async fn run(task: Task, config: RunConfig) -> Result<RunOutcome, Error> {
     // Create artifact directory
-    let dir_name = Utc::now().format("%Y%m%d_%H%M%S").to_string();
-    let artifact_dir = config.artifact_base.join(&dir_name);
+    let artifact_dir = config.artifact_base;
     tokio::fs::create_dir_all(&artifact_dir)
         .await
         .map_err(Error::ArtifactDir)?;
@@ -274,11 +273,12 @@ async fn run_step(
             }
         };
 
-        // Wait for child to finish running or the exit signal
         tokio::select! {
             exit = child.wait() => {
+                // Child finished running
                 match exit {
                     Ok(status) => {
+                        // Successful exit
                         info!(?cmd, ?status, "child exited");
                         outcome = Some(StepOutcome::Completed {
                             cmd: cmd.clone(),
@@ -292,6 +292,7 @@ async fn run_step(
                     }
                     Err(e) => {
                         // Child did not spawn successfully
+                        warn!(?cmd, ?e, "child failed to spawn");
                         outcome = Some(StepOutcome::SpawnError {
                             cmd: cmd.clone(),
                             error: e.to_string()
@@ -300,8 +301,8 @@ async fn run_step(
                 }
             }
 
-            // Exit signal (abort or deadline)
             _ = exit_rx.recv() => {
+                // Exit signal (abort or deadline)
                 info!(child = ?child, "exit signal received, killing child");
                 child.kill().await.unwrap();
                 outcome = Some(StepOutcome::Abort {

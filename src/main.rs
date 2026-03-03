@@ -1,8 +1,11 @@
 use std::fs;
 use std::path::PathBuf;
 
-use sat_o_mat::task::format::Task;
-use sat_o_mat::task::runner::{RunConfig, run};
+mod scheduler;
+mod task;
+
+use crate::task::format::Task;
+use crate::task::runner::{RunConfig, run};
 
 #[tokio::main]
 async fn main() {
