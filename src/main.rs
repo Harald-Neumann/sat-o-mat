@@ -1,25 +1,52 @@
 use std::fs;
 use std::path::PathBuf;
 
+mod config;
 mod scheduler;
 mod task;
+
+use clap::{Parser, Subcommand};
+use tracing::info;
 
 use crate::task::format::Task;
 use crate::task::runner::{RunConfig, run};
 
+#[derive(Parser)]
+#[command(name = "sat-o-mat")]
+#[command(about = "An application to control satellite ground station hardware")]
+struct Args {
+    /// The config file. Defaults to $XDG_CONFIG_HOME/sat-o-mat/config.yaml
+    #[arg(short, long, value_name = "FILE")]
+    config: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Run a Task
+    Run {
+        /// The task definition file
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+    },
+}
+
 #[tokio::main]
-async fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() >= 3 && args[1] == "runner" {
-        if let Err(err) = run_runner(&args[2]).await {
-            eprintln!("runner error: {err}");
-            std::process::exit(1);
+async fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+
+    let config = config::load(args.config.as_ref())?;
+    info!(?config);
+
+    match args.command {
+        Commands::Run { file } => {
+            println!("running {:?}", file);
         }
-        return;
     }
 
-    eprintln!("usage: sat-o-mat runner <task.yaml>");
-    std::process::exit(2);
+    Ok(())
 }
 
 async fn run_runner(task_path: &str) -> Result<(), Box<dyn std::error::Error>> {
