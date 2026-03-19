@@ -13,7 +13,7 @@
 //! Each `Task` has a unique identifier given by its filename.
 //! The unique identifier typically has the following structure, although it is not mandatory:
 //!
-//! `task_template_name.<RFC3339 start timestamp>.<4 character UUID>.yaml`
+//! `task_template_name.<RFC3339 start timestamp>.yaml`
 //!
 //! It is not possible for two `Task`s to have the same unique identifier.
 //!
@@ -40,8 +40,8 @@ use thiserror::Error;
 use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
 
-use crate::Task;
-use crate::task::runner::{self, RunConfig};
+use crate::task::runner::RunConfig;
+use crate::{Task, task};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -137,7 +137,7 @@ pub async fn run(base: &Path) -> Result<(), Error> {
 
         info!(%unique_id, "spawning runner for task");
         tokio::spawn(async move {
-            let outcome = runner::run(task, config).await;
+            let outcome = task::runner::run(task, config).await;
 
             let dest = match &outcome {
                 Ok(o) if !o.aborted() => &completed_path,
@@ -163,7 +163,7 @@ fn directory_watcher(
 
     for res in rx {
         let event = res?;
-        debug!(?event, "got event");
+        debug!(kind = ?event.kind, paths = ?event.paths, "got event");
 
         let mut tasks = tasks.lock().unwrap();
         let changed = match event.kind {
@@ -180,6 +180,8 @@ fn directory_watcher(
                 tasks.remove(&unique_id);
                 true
             }
+            // Irrelevant events
+            EventKind::Access(_) => false,
             _ => {
                 debug!(?event, "unhandled event");
                 false
@@ -239,4 +241,123 @@ fn next_to_run(tasks: &HashMap<String, Task>) -> Option<(String, DateTime<Utc>)>
 
 fn path_to_unique_id(path: &Path) -> String {
     path.file_name().unwrap().to_str().unwrap().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use tempfile::TempDir;
+
+    fn setup() -> TempDir {
+        tracing_subscriber::fmt()
+            .with_test_writer()
+            .with_env_filter("sat_o_mat=debug")
+            .try_init()
+            .ok();
+        tempfile::tempdir().unwrap()
+    }
+
+    fn write_active(base: &Path, filename: &str, yaml: &str) {
+        std::fs::create_dir_all(base.join("Active")).unwrap();
+        std::fs::write(base.join("Active").join(filename), yaml).unwrap();
+    }
+
+    /// Poll `path` every 50 ms until it exists or 5 s elapses.
+    async fn wait_for(path: &Path) -> bool {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while tokio::time::Instant::now() < deadline {
+            if path.exists() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        false
+    }
+
+    const TASK_OK: &str = r#"
+variables:
+  end: "2099-01-01T00:00:00Z"
+steps:
+  - cmd: "true"
+    wait: true
+"#;
+
+    const TASK_ABORT: &str = r#"
+variables:
+  end: "2099-01-01T00:00:00Z"
+steps:
+  - cmd: "false"
+    wait: true
+"#;
+
+    // Missing required `end` variable
+    const TASK_INVALID: &str = "variables:\n  start: '2099-01-01T00:00:00Z'\nsteps: []\n";
+
+    #[tokio::test]
+    async fn directories_are_created() {
+        let base = setup();
+        let base_path = base.path().to_path_buf();
+        let handle = tokio::spawn(async move { run(&base_path).await });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        handle.abort();
+
+        for dir in ["Active", "Failed", "Completed", "Artifacts"] {
+            assert!(base.path().join(dir).is_dir(), "{dir} should exist");
+        }
+    }
+
+    #[tokio::test]
+    async fn successful_task_moved_to_completed() {
+        let base = setup();
+        write_active(base.path(), "task.yaml", TASK_OK);
+
+        let base_path = base.path().to_path_buf();
+        let handle = tokio::spawn(async move { run(&base_path).await });
+
+        assert!(wait_for(&base.path().join("Completed/task.yaml")).await);
+        handle.abort();
+        assert!(!base.path().join("Active/task.yaml").exists());
+    }
+
+    #[tokio::test]
+    async fn aborted_task_moved_to_failed() {
+        let base = setup();
+        write_active(base.path(), "task.yaml", TASK_ABORT);
+
+        let base_path = base.path().to_path_buf();
+        let handle = tokio::spawn(async move { run(&base_path).await });
+
+        assert!(wait_for(&base.path().join("Failed/task.yaml")).await);
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn invalid_task_moved_to_failed_on_load() {
+        let base = setup();
+        write_active(base.path(), "bad.yaml", TASK_INVALID);
+
+        let base_path = base.path().to_path_buf();
+        let handle = tokio::spawn(async move { run(&base_path).await });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        handle.abort();
+
+        assert!(base.path().join("Failed/bad.yaml").exists());
+        assert!(!base.path().join("Active/bad.yaml").exists());
+    }
+
+    #[tokio::test]
+    async fn task_added_at_runtime_is_executed() {
+        let base = setup();
+
+        let base_path = base.path().to_path_buf();
+        let handle = tokio::spawn(async move { run(&base_path).await });
+
+        // Give the directory watcher time to start before writing the file.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        write_active(base.path(), "task.yaml", TASK_OK);
+
+        assert!(wait_for(&base.path().join("Completed/task.yaml")).await);
+        handle.abort();
+    }
 }

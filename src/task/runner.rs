@@ -155,7 +155,7 @@ async fn run_steps(
             }
             outcome = outcome_rx.recv() => {
                 if outcome.is_none() {
-                    info!("all senders exited, breaking");
+                    info!("all senders exited");
                     break;
                 }
                 let outcome = outcome.unwrap();
@@ -165,7 +165,7 @@ async fn run_steps(
                     warn!(?cmd, ?reason, "aborted, sending exit signal");
                     let _ = exit_tx.send(());
                 } else {
-                    info!(outcome = ?outcome, "got outcome");
+                    info!(?outcome, "got outcome");
                 }
             }
         }
@@ -258,7 +258,7 @@ async fn run_step(
         // Try to spawn a child process for `cmd`
         let mut child = match spawn_command(&cmd, &cwd) {
             Ok(child) => {
-                info!(child = ?child, cmd = cmd, "spawned child");
+                info!(pid = ?child.id(), cmd = cmd, "spawned child");
                 child
             }
             Err(e) => {
