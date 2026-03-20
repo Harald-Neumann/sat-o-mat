@@ -7,6 +7,10 @@ mod task;
 
 use clap::{Parser, Subcommand};
 use tracing::info;
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{EnvFilter, fmt};
 
 use crate::task::format::Task;
 use crate::task::runner::{RunConfig, run};
@@ -36,6 +40,15 @@ enum Commands {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(
+            EnvFilter::builder()
+                .with_default_directive(LevelFilter::INFO.into())
+                .from_env_lossy(),
+        )
+        .init();
 
     let config = config::load(args.config.as_ref())?;
     info!(?config);
