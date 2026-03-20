@@ -369,7 +369,14 @@ mod tests {
     use super::*;
     use crate::task::format::{OnFail, Step, Task, TimeSpec};
     use chrono::TimeDelta;
-    use tracing_test::traced_test;
+
+    fn init_tracing() {
+        tracing_subscriber::fmt()
+            .with_test_writer()
+            .with_env_filter("sat_o_mat=debug")
+            .try_init()
+            .ok();
+    }
 
     // --- Integration tests ---
 
@@ -418,6 +425,7 @@ mod tests {
     }
 
     async fn run_with_tempdir(task: Task) -> RunOutcome {
+        init_tracing();
         let temp = tempfile::tempdir().expect("failed to create temp dir");
         let config = RunConfig {
             artifact_base: temp.path().to_path_buf(),
@@ -437,7 +445,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[traced_test]
     async fn wait_true_blocks_until_complete() {
         // Use a command that takes a moment but succeeds
         let task = make_task(vec![waited("sleep 0.1 && echo done")], vec![]);
@@ -449,7 +456,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[traced_test]
     async fn on_fail_abort_stops_execution() {
         let task = make_task(vec![waited("false"), waited("echo should not run")], vec![]);
         let outcome = run_with_tempdir(task).await;
@@ -462,7 +468,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[traced_test]
     async fn on_fail_continue_proceeds() {
         let task = make_task(
             vec![waited_continue("false"), waited("echo still running")],
@@ -480,7 +485,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[traced_test]
     async fn on_fail_retry_succeeds_eventually() {
         // This command fails the first time (file doesn't exist),
         // creates the file, then succeeds on retry.
@@ -503,6 +507,7 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_always_runs_after_abort() {
+        init_tracing();
         let task = make_task(vec![waited("false")], vec![waited("touch cleanup_ran")]);
 
         let temp = std::env::temp_dir().join(format!("sat-o-mat-cleanup-{}", std::process::id()));
@@ -518,7 +523,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[traced_test]
     async fn end_time_deadline_kills_long_step() {
         // End time 1 second from now; step sleeps 60 seconds
         let end = Utc::now() + TimeDelta::seconds(1);
@@ -538,7 +542,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[traced_test]
     async fn shell_variable_resolution() {
         let task = Task {
             variables: HashMap::from([("greeting".into(), "${echo hello}".into())]),
@@ -552,6 +555,7 @@ mod tests {
 
     #[tokio::test]
     async fn artifact_directory_is_created() {
+        init_tracing();
         let task = make_task(vec![waited("pwd")], vec![]);
 
         let temp = std::env::temp_dir().join(format!("sat-o-mat-artifact-{}", std::process::id()));
@@ -595,7 +599,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[traced_test]
     async fn background_abort_on_fail_stops_execution() {
         // Background step exits immediately with failure; the next step is a
         // long wait that should be interrupted by the background failure.
@@ -622,7 +625,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[traced_test]
     async fn aborting_background_step_prevents_future_timed_step_spawn() {
         let task = Task {
             variables: HashMap::new(),

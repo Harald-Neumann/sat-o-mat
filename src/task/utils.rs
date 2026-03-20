@@ -66,6 +66,43 @@ pub fn resolve_time(spec: &TimeSpec, vars: &HashMap<String, String>) -> Option<D
     }
 }
 
+/// Check if the given task's time range overlaps with any other active task.
+/// Returns the conflicting task's ID if a conflict is found.
+pub async fn check_time_conflict(
+    tasks_path: &Path,
+    exclude_id: &str,
+    task: &super::Task,
+) -> Option<String> {
+    let (new_start, new_end) = task.time_range()?;
+    let exclude_filename = super::Task::filename(exclude_id);
+
+    let active_path = tasks_path.join("Active");
+    let mut read_dir = tokio::fs::read_dir(&active_path).await.ok()?;
+
+    while let Ok(Some(entry)) = read_dir.next_entry().await {
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if file_name == exclude_filename {
+            continue;
+        }
+
+        let Ok(content) = tokio::fs::read_to_string(entry.path()).await else {
+            continue;
+        };
+        let Ok(other_task) = super::Task::from_yaml_str(&content) else {
+            continue;
+        };
+
+        if let Some((other_start, other_end)) = other_task.time_range() {
+            // Two ranges [s1,e1) and [s2,e2) overlap iff s1 < e2 && s2 < e1
+            if new_start < other_end && other_start < new_end {
+                return Some(super::Task::id_from_filename(&file_name).to_string());
+            }
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::TimeDelta;

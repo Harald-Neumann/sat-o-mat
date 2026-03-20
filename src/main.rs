@@ -1,8 +1,10 @@
 use std::fs;
 use std::path::PathBuf;
 
+mod api;
 mod config;
 mod scheduler;
+mod server;
 mod task;
 
 use clap::{Parser, Subcommand};
@@ -35,6 +37,11 @@ enum Commands {
         #[arg(value_name = "FILE")]
         file: PathBuf,
     },
+
+    Server {
+        host: String,
+        port: u32,
+    },
 }
 
 #[tokio::main]
@@ -56,6 +63,9 @@ async fn main() -> anyhow::Result<()> {
     match args.command {
         Commands::Run { file } => {
             println!("running {:?}", file);
+        }
+        Commands::Server { host, port } => {
+            server::run(config, host, port).await?;
         }
     }
 

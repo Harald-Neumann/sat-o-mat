@@ -88,6 +88,8 @@ pub async fn run(base: &Path) -> Result<(), Error> {
         });
     }
 
+    info!("scheduler running");
+
     // Main loop
     loop {
         // Find the next task that should be run by start time

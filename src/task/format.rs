@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use serde::Deserialize;
@@ -25,6 +26,9 @@ pub struct Task {
     pub cleanup: Vec<Step>,
 }
 
+pub const TASK_STATES: &[&str] = &["Active", "PendingApproval", "Completed", "Failed"];
+pub const TASK_EXTENSION: &str = ".yaml";
+
 impl Task {
     pub fn from_yaml_str(yaml: &str) -> Result<Self, Error> {
         let schedule: Task = serde_yaml::from_str(yaml)?;
@@ -32,6 +36,48 @@ impl Task {
             return Err(Error::MissingVariable("end"));
         }
         Ok(schedule)
+    }
+
+    /// Resolve a task ID to its filename on disk.
+    pub fn filename(id: &str) -> String {
+        format!("{id}{TASK_EXTENSION}")
+    }
+
+    /// Strip the `.yaml` extension from a filename to get the task ID.
+    pub fn id_from_filename(filename: &str) -> &str {
+        filename.strip_suffix(TASK_EXTENSION).unwrap_or(filename)
+    }
+
+    /// Find a task file across all state directories. Returns (state_name, file_contents).
+    pub async fn find(tasks_path: &Path, id: &str) -> Option<(String, String)> {
+        // Reject path traversal
+        if id.contains('/') || id.contains('\\') || id == ".." || id == "." {
+            return None;
+        }
+
+        let filename = Self::filename(id);
+        for &dir in TASK_STATES {
+            let path = tasks_path.join(dir).join(&filename);
+            if let Ok(content) = tokio::fs::read_to_string(&path).await {
+                return Some((dir.to_string(), content));
+            }
+        }
+        None
+    }
+
+    /// Extract start/end times from this task's variables.
+    pub fn time_range(&self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+        let start = self
+            .variables
+            .get("start")
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&Utc))?;
+        let end = self
+            .variables
+            .get("end")
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&Utc))?;
+        Some((start, end))
     }
 }
 

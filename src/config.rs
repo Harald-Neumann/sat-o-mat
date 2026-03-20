@@ -5,30 +5,31 @@ use cross_xdg::BaseDirs;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Config {
-    station_name: String,
-    api: ApiConfig,
-    task_directory: String,
-    artifact_directory: String,
+    pub station_name: String,
+    pub api: ApiConfig,
+    pub tasks_path: PathBuf,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct ApiConfig {
-    keys: Vec<ApiKey>,
+    pub keys: Vec<ApiKey>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct ApiKey {
-    key: String,
-    permission: Vec<Permission>,
+    pub key: String,
+    pub permissions: Vec<Permission>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub enum Permission {
     ViewTasks,
     SubmitTask,
+    EditTask,
     DeleteTask,
+    AutoApproveTask,
 }
 
 pub fn load(path: Option<&PathBuf>) -> anyhow::Result<Config> {
@@ -53,11 +54,13 @@ pub fn load(path: Option<&PathBuf>) -> anyhow::Result<Config> {
 
 impl Default for Config {
     fn default() -> Self {
+        let dirs = BaseDirs::new().unwrap();
+        let base = dirs.state_home().join("sat-o-mat");
+
         Self {
             station_name: "Sat-o-Mat Test Station".to_string(),
             api: ApiConfig { keys: Vec::new() },
-            task_directory: Default::default(),
-            artifact_directory: Default::default(),
+            tasks_path: base.join("tasks"),
         }
     }
 }
