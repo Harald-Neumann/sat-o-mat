@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod error;
+mod station;
 mod tasks;
 
 use std::path::PathBuf;
@@ -14,6 +15,7 @@ use utoipa_axum::router::OpenApiRouter;
 use crate::config::Config;
 
 const TASKS_TAG: &str = "tasks";
+const STATION_TAG: &str = "station";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -26,7 +28,8 @@ pub struct AppState {
 #[derive(OpenApi)]
 #[openapi(
     tags(
-        (name = TASKS_TAG, description = "Tasks API")
+        (name = TASKS_TAG, description = "Tasks API"),
+        (name = STATION_TAG, description = "Station API")
     ),
     modifiers(&SecurityAddon)
 )]
@@ -57,6 +60,7 @@ pub fn router(config: &Config) -> OpenApiRouter {
         .nest(
             "/api",
             OpenApiRouter::new()
+                .routes(utoipa_axum::routes!(station::get_station))
                 .routes(utoipa_axum::routes!(tasks::list_tasks))
                 .routes(utoipa_axum::routes!(
                     tasks::get_task,
