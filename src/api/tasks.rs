@@ -6,6 +6,8 @@ use tracing::{info, warn};
 use utoipa::ToSchema;
 
 use crate::config::Permission;
+use chrono::{DateTime, Utc};
+
 use crate::task::format::{TASK_STATES, Task};
 use crate::task::utils::check_time_conflict;
 
@@ -61,16 +63,24 @@ pub async fn list_tasks(
                 continue;
             };
 
-            entries.push(TaskListEntry {
-                id,
-                state: dir.to_string(),
-                start: task.variables.get("start").cloned(),
-                end: task.variables.get("end").cloned(),
-            });
+            let start = task.get_time_variable("start").ok();
+            let end = task.get_time_variable("end").ok();
+
+            entries.push((
+                start,
+                TaskListEntry {
+                    id,
+                    state: dir.to_string(),
+                    start: start.map(|t| t.to_string()),
+                    end: end.map(|t| t.to_string()),
+                },
+            ));
         }
     }
 
-    Ok(Json(entries))
+    entries.sort_by(|a, b| b.0.cmp(&a.0));
+
+    Ok(Json(entries.into_iter().map(|(_, e)| e).collect()))
 }
 
 /// Get the full YAML text of a specific task.
@@ -438,9 +448,9 @@ steps:
     }
 
     #[tokio::test]
-    async fn put_missing_end_variable_returns_400() {
+    async fn put_invalid_task_definition_returns_400() {
         let (_, router) = setup(all_permissions());
-        let yaml = "variables:\n  start: \"2026-01-01T00:00:00Z\"\nsteps: []\n";
+        let yaml = "variables:\n  start: \"2026-01-01T00:00:00Z\"\nsteps: foobar\n";
         let req = Request::put("/api/tasks/bad")
             .header("api_key", "test-key")
             .body(Body::from(yaml))
