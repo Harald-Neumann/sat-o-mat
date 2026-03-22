@@ -5,7 +5,7 @@ use tokio::{net::TcpListener, spawn};
 use tracing::{info, warn};
 use utoipa_rapidoc::RapiDoc;
 
-use crate::{api, config::Config, scheduler};
+use crate::{api, config::Config, frontend, scheduler};
 
 pub async fn run(config: Config, host: String, port: u32) -> Result<()> {
     // Start scheduler
@@ -18,8 +18,9 @@ pub async fn run(config: Config, host: String, port: u32) -> Result<()> {
 
     // Set up API server
     let (router, api) = api::router(&config).split_for_parts();
-    let router =
-        router.merge(RapiDoc::with_openapi("/api-docs/openapi.json", api).path("/rapidoc"));
+    let router = router
+        .merge(RapiDoc::with_openapi("/api-docs/openapi.json", api).path("/rapidoc"))
+        .fallback_service(frontend::router());
 
     let address: SocketAddrV4 = format!("{host}:{port}").parse()?;
     let listener = TcpListener::bind(address).await?;
