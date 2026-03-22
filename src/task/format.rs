@@ -8,15 +8,21 @@ use serde::de;
 use serde::ser::{self, SerializeMap};
 use serde_yaml::Value;
 
+use crate::task::utils::resolve_time;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("invalid YAML: {0}")]
     Yaml(#[from] serde_yaml::Error),
     #[error("missing required variable: {0}")]
-    MissingVariable(&'static str),
+    MissingVariable(String),
+    #[error("Invalid variable in time spec")]
+    InvalidVariableInTimeSpec,
+    #[error("Invalid time spec")]
+    InvalidTimeSpec(serde_yaml::Error),
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Task {
     #[serde(default)]
     pub variables: HashMap<String, String>,
@@ -30,12 +36,29 @@ pub const TASK_STATES: &[&str] = &["Active", "PendingApproval", "Completed", "Fa
 pub const TASK_EXTENSION: &str = ".yaml";
 
 impl Task {
+    pub fn new(variables: HashMap<String, String>, steps: Vec<Step>, cleanup: Vec<Step>) -> Self {
+        let mut task = Self {
+            variables,
+            steps,
+            cleanup,
+        };
+
+        task.ensure_start_time();
+        task
+    }
+
     pub fn from_yaml_str(yaml: &str) -> Result<Self, Error> {
-        let schedule: Task = serde_yaml::from_str(yaml)?;
-        if !schedule.variables.contains_key("end") {
-            return Err(Error::MissingVariable("end"));
-        }
-        Ok(schedule)
+        let mut task: Task = serde_yaml::from_str(yaml)?;
+        task.ensure_start_time();
+
+        Ok(task)
+    }
+
+    fn ensure_start_time(&mut self) {
+        // If start time is not given, set to now
+        self.variables
+            .entry("start".into())
+            .or_insert_with(|| Utc::now().to_rfc3339());
     }
 
     /// Resolve a task ID to its filename on disk.
@@ -65,19 +88,20 @@ impl Task {
         None
     }
 
-    /// Extract start/end times from this task's variables.
-    pub fn time_range(&self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
-        let start = self
-            .variables
-            .get("start")
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&Utc))?;
-        let end = self
-            .variables
-            .get("end")
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&Utc))?;
-        Some((start, end))
+    pub fn get_time_variable(&self, variable: &str) -> Result<DateTime<Utc>, Error> {
+        self.variables
+            .get(variable)
+            .ok_or_else(|| Error::MissingVariable(variable.to_owned()))
+            .and_then(|s| serde_yaml::from_str::<TimeSpec>(s).map_err(Error::InvalidTimeSpec))
+            .and_then(|spec| {
+                resolve_time(&spec, &self.variables).ok_or(Error::InvalidVariableInTimeSpec)
+            })
+    }
+    pub fn time_range(&self) -> Result<(DateTime<Utc>, DateTime<Utc>), Error> {
+        Ok((
+            self.get_time_variable("start")?,
+            self.get_time_variable("end")?,
+        ))
     }
 }
 
@@ -302,15 +326,6 @@ cleanup:
             if variable == "end" && *offset == TimeDelta::seconds(-10))
         );
         assert!(matches!(&step.on_fail, OnFail::Retry(3)));
-    }
-
-    #[test]
-    fn missing_end_variable() {
-        let yaml = "variables:\n  start: '2026-01-01T00:00:00Z'\nsteps: []\n";
-        assert!(matches!(
-            Task::from_yaml_str(yaml),
-            Err(Error::MissingVariable("end"))
-        ));
     }
 
     fn deser_time_spec(s: &str) -> TimeSpec {

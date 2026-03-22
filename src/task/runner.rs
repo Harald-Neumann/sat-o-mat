@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
+use std::{fs, io};
 
 use chrono::{DateTime, Utc};
 use tokio::process::Command;
@@ -11,7 +12,7 @@ use tokio::time::{Duration, sleep};
 use tokio::{spawn, task};
 use tracing::{info, warn};
 
-use crate::task::format::{OnFail, Step, Task, TimeSpec};
+use crate::task::format::{self, OnFail, Step, Task, TimeSpec};
 use crate::task::utils::{resolve_time, resolve_variables, substitute_variables};
 
 #[derive(Debug, thiserror::Error)]
@@ -20,10 +21,10 @@ pub enum Error {
     ArtifactDir(std::io::Error),
     #[error("IO error during variable resolution: {0}")]
     VariableResolveIo(std::io::Error),
-    #[error("Invalid variable in time spec")]
-    InvalidVariableInTimeSpec,
-    #[error("Invalid time spec")]
-    InvalidTimeSpec(serde_yaml::Error),
+    #[error("Format error: {0}")]
+    Format(format::Error),
+    #[error("IO error: {0}")]
+    Io(io::Error),
 }
 
 pub struct RunConfig {
@@ -81,37 +82,27 @@ pub async fn run(task: Task, config: RunConfig) -> Result<RunOutcome, Error> {
     info!(?artifact_dir, "created artifact directory");
 
     // Resolve variables (evaluate ${...} shell commands)
-    let mut vars = task.variables;
-    resolve_variables(&mut vars, &artifact_dir)
+    let mut task = task.clone();
+    resolve_variables(&mut task.variables, &artifact_dir)
         .await
         .map_err(Error::VariableResolveIo)?;
 
     // Resolve start/end timestamps
-    vars.entry("start".into())
-        .or_insert_with(|| Utc::now().to_rfc3339());
+    let start_time = task.get_time_variable("start").map_err(Error::Format)?;
+    let end_time = task.get_time_variable("end").ok();
 
-    let start_time = DateTime::parse_from_rfc3339(&vars["start"])
-        .expect("start variable must be a valid RFC 3339 timestamp")
-        .with_timezone(&Utc);
-
-    let end_time = match vars.get("end") {
-        Some(v) => Some(
-            serde_yaml::from_str::<TimeSpec>(v)
-                .map(|time_spec| resolve_time(&time_spec, &vars))
-                .map_err(Error::InvalidTimeSpec)?
-                .ok_or(Error::InvalidVariableInTimeSpec)?,
-        ),
-        None => None,
-    };
+    // Write task with variables resolved to the artifacts directory
+    let resolved_task_yaml = serde_yaml::to_string(&task).unwrap();
+    fs::write(artifact_dir.join("task.yml"), resolved_task_yaml).map_err(Error::Io)?;
 
     // If start is in the future, wait
     sleep_until(start_time).await;
 
     // Run main steps with end-time deadline
-    let step_outcomes = run_steps(task.steps, &vars, &artifact_dir, end_time).await;
+    let step_outcomes = run_steps(task.steps, &task.variables, &artifact_dir, end_time).await;
 
     // Cleanup steps
-    let _ = run_steps(task.cleanup, &vars, &artifact_dir, None).await;
+    let _ = run_steps(task.cleanup, &task.variables, &artifact_dir, None).await;
 
     Ok(RunOutcome {
         artifact_dir,
@@ -381,11 +372,7 @@ mod tests {
     // --- Integration tests ---
 
     fn make_task(steps: Vec<Step>, cleanup: Vec<Step>) -> Task {
-        Task {
-            variables: HashMap::new(),
-            steps,
-            cleanup,
-        }
+        Task::new(HashMap::new(), steps, cleanup)
     }
 
     fn step(cmd: &str) -> Step {
@@ -488,14 +475,14 @@ mod tests {
     async fn on_fail_retry_succeeds_eventually() {
         // This command fails the first time (file doesn't exist),
         // creates the file, then succeeds on retry.
-        let task = Task {
-            variables: HashMap::new(),
-            steps: vec![waited_retry(
+        let task = Task::new(
+            HashMap::new(),
+            vec![waited_retry(
                 "test -f attempt_marker || { touch attempt_marker; false; }",
                 2,
             )],
-            cleanup: vec![waited("rm -f attempt_marker")],
-        };
+            vec![waited("rm -f attempt_marker")],
+        );
 
         let outcome = run_with_tempdir(task).await;
         assert_eq!(outcome.step_outcomes.len(), 1);
@@ -526,11 +513,11 @@ mod tests {
     async fn end_time_deadline_kills_long_step() {
         // End time 1 second from now; step sleeps 60 seconds
         let end = Utc::now() + TimeDelta::seconds(1);
-        let task = Task {
-            variables: HashMap::from([("end".into(), end.to_rfc3339())]),
-            steps: vec![waited("sleep 60")],
-            cleanup: vec![],
-        };
+        let task = Task::new(
+            HashMap::from([("end".into(), end.to_rfc3339())]),
+            vec![waited("sleep 60")],
+            vec![],
+        );
 
         let start = std::time::Instant::now();
         let outcome = run_with_tempdir(task).await;
@@ -543,11 +530,11 @@ mod tests {
 
     #[tokio::test]
     async fn shell_variable_resolution() {
-        let task = Task {
-            variables: HashMap::from([("greeting".into(), "${echo hello}".into())]),
-            steps: vec![waited("echo $greeting")],
-            cleanup: vec![],
-        };
+        let task = Task::new(
+            HashMap::from([("greeting".into(), "${echo hello}".into())]),
+            vec![waited("echo $greeting")],
+            vec![],
+        );
         let outcome = run_with_tempdir(task).await;
         assert!(!outcome.aborted());
         assert_eq!(outcome.step_outcomes.len(), 1);
@@ -626,9 +613,9 @@ mod tests {
 
     #[tokio::test]
     async fn aborting_background_step_prevents_future_timed_step_spawn() {
-        let task = Task {
-            variables: HashMap::new(),
-            steps: vec![
+        let task = Task::new(
+            HashMap::new(),
+            vec![
                 background_abort("false"),
                 Step {
                     cmd: "touch spawned_after_abort".into(),
@@ -640,8 +627,8 @@ mod tests {
                     on_fail: OnFail::Abort,
                 },
             ],
-            cleanup: vec![],
-        };
+            vec![],
+        );
 
         let outcome = run_with_tempdir(task).await;
         assert!(outcome.aborted());

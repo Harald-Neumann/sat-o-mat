@@ -73,7 +73,9 @@ pub async fn check_time_conflict(
     exclude_id: &str,
     task: &super::Task,
 ) -> Option<String> {
-    let (new_start, new_end) = task.time_range()?;
+    let (new_start, new_end) = task
+        .time_range()
+        .expect("task does not have a valid time range");
     let exclude_filename = super::Task::filename(exclude_id);
 
     let active_path = tasks_path.join("Active");
@@ -92,7 +94,7 @@ pub async fn check_time_conflict(
             continue;
         };
 
-        if let Some((other_start, other_end)) = other_task.time_range() {
+        if let Ok((other_start, other_end)) = other_task.time_range() {
             // Two ranges [s1,e1) and [s2,e2) overlap iff s1 < e2 && s2 < e1
             if new_start < other_end && other_start < new_end {
                 return Some(super::Task::id_from_filename(&file_name).to_string());

@@ -293,8 +293,9 @@ steps:
     wait: true
 "#;
 
-    // Missing required `end` variable
-    const TASK_INVALID: &str = "variables:\n  start: '2099-01-01T00:00:00Z'\nsteps: []\n";
+    // Invalid task definition; steps is a string instead of a list
+    const TASK_INVALID: &str =
+        "variasadfasbles:\n  start: '2099-01-01T00:00:00Z'\nsteps: 'foobar'\n";
 
     #[tokio::test]
     async fn directories_are_created() {
