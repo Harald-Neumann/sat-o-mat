@@ -2,21 +2,14 @@ use std::{collections::HashMap, fs, io, path::PathBuf};
 
 use chrono::{DateTime, Utc};
 use lox_space::{
-    analysis::{
-        assets::AssetId,
-        visibility::{DynPass, ElevationMask},
-    },
-    bodies::DynOrigin,
-    frames::{DynFrame, providers::DefaultRotationProvider},
+    analysis::{assets::AssetId, visibility::DynPass},
+    frames::providers::DefaultRotationProvider,
     orbits::{
         events::{DetectFn, EventsToIntervals, IntervalDetector, RootFindingDetector},
         orbits::DynTrajectory,
         propagators::{OrbitSource, sgp4::Sgp4},
     },
-    prelude::{
-        GroundLocation, GroundStation, Interval, Pass, Propagator, Spacecraft, TimeDelta,
-        Trajectory,
-    },
+    prelude::{GroundStation, Interval, Pass, Propagator, Spacecraft, TimeDelta},
     time::{
         Time,
         time_scales::{DynTimeScale, TimeScale},
@@ -104,25 +97,16 @@ impl PredictDb {
         &self,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
-        gs_loc: GroundLocation<DynOrigin>,
-        mask: Option<ElevationMask>,
+        gs: &GroundStation,
     ) -> HashMap<AssetId, Vec<DynPass>> {
         let interval = Interval::new(start.into(), end.into());
-        let gs = GroundStation::new(
-            "GS",
-            gs_loc,
-            mask.unwrap_or(ElevationMask::with_fixed_elevation(0.0)),
-        );
 
         self.predict_trajectories(start, end)
             .iter()
             .map(|(sc, trajectory)| {
                 // Detect passes
                 let detector = EventsToIntervals::new(RootFindingDetector::new(
-                    SimpleElevationDetector {
-                        gs: gs.clone(),
-                        trajectory: trajectory.clone(),
-                    },
+                    SimpleElevationDetector { gs, trajectory },
                     TimeDelta::from_seconds(30),
                 ));
 
@@ -140,7 +124,7 @@ impl PredictDb {
                             TimeDelta::from_seconds(1),
                             gs.location(),
                             gs.mask(),
-                            &trajectory.clone().into_dyn(),
+                            trajectory,
                             gs.body_fixed_frame(),
                         )
                         .unwrap()
@@ -153,15 +137,15 @@ impl PredictDb {
     }
 }
 
-struct SimpleElevationDetector {
-    pub gs: GroundStation,
-    pub trajectory: Trajectory<DynTimeScale, DynOrigin, DynFrame>,
+struct SimpleElevationDetector<'a> {
+    pub gs: &'a GroundStation,
+    pub trajectory: &'a DynTrajectory,
 }
 
 #[derive(thiserror::Error, Debug)]
 enum ElevationDetectError {}
 
-impl<T: TimeScale + Into<DynTimeScale>> DetectFn<T> for SimpleElevationDetector {
+impl<'a, T: TimeScale + Into<DynTimeScale>> DetectFn<T> for SimpleElevationDetector<'a> {
     type Error = ElevationDetectError;
 
     fn eval(&self, time: Time<T>) -> Result<f64, Self::Error> {

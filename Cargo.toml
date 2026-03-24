@@ -23,6 +23,8 @@ utoipa-rapidoc = { version = "6.0.0", features = ["axum"] }
 axum = "0.8.8"
 rust-embed = "8"
 mime_guess = "2"
+sgp4 = "2.4.0"
+lox-space = "0.1.0-alpha.37"
 
 [dev-dependencies]
 tempfile = "3"

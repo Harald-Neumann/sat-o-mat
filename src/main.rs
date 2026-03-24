@@ -4,6 +4,7 @@ use std::path::PathBuf;
 mod api;
 mod config;
 mod frontend;
+mod predict;
 mod scheduler;
 mod server;
 mod task;
