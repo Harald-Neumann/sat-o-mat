@@ -166,18 +166,38 @@ impl<'a, T: TimeScale + Into<DynTimeScale>> DetectFn<T> for SimpleElevationDetec
 mod tests {
     use super::*;
 
+    use chrono::TimeZone;
+    use lox_space::{
+        analysis::visibility::ElevationMask,
+        bodies::DynOrigin,
+        core::coords::LonLatAlt,
+        prelude::{GroundLocation, GroundStation},
+    };
+
+    fn tle_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/tle")
+    }
+
+    fn test_ground_station() -> GroundStation {
+        let coords = LonLatAlt::from_degrees(13.4, 52.52, 100.0).unwrap();
+        let location = GroundLocation::try_new(coords, DynOrigin::Earth).unwrap();
+        let mask = ElevationMask::with_fixed_elevation(0.0);
+        GroundStation::new("GS", location, mask)
+    }
+
     #[test]
     fn add_tles_loads_propagators_from_directory() {
         let mut db = PredictDb::new();
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/tle");
-        db.add_tles(&dir).unwrap();
+        db.add_tles(&tle_dir()).unwrap();
 
-        assert_eq!(db.len(), 5);
+        assert_eq!(db.len(), 7);
         assert!(db.contains("NanoFF B LEOP D-Orbit"));
         assert!(db.contains("NanoFF B SatNOGS"));
         assert!(db.contains("NanoFF B Space-Track"));
         assert!(db.contains("NanoFF A GNSS TLE SatNOGS"));
         assert!(db.contains("NanoFF A Space-Track"));
+        assert!(db.contains("NanoFF A"));
+        assert!(db.contains("NanoFF B"));
     }
 
     #[test]
@@ -193,5 +213,49 @@ mod tests {
         let mut db = PredictDb::new();
         db.add_tles(&tmp.path().to_path_buf()).unwrap();
         assert_eq!(db.len(), 0);
+    }
+
+    #[test]
+    fn predict_trajectories_returns_trajectories_for_all_spacecraft() {
+        let mut db = PredictDb::new();
+        db.add_tles(&tle_dir()).unwrap();
+
+        let start = Utc.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 1, 15, 1, 0, 0).unwrap();
+
+        let trajectories = db.predict_trajectories(start, end);
+        assert_eq!(trajectories.len(), db.len());
+    }
+
+    #[test]
+    fn predict_passes_returns_passes_for_loaded_tles() {
+        let mut db = PredictDb::new();
+        db.add_tles(&tle_dir()).unwrap();
+
+        let gs = test_ground_station();
+        let start = Utc.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap();
+
+        let passes = db.predict_passes(start, end, &gs);
+        assert!(!passes.is_empty());
+    }
+
+    #[test]
+    fn predict_passes_observables_have_positive_elevation() {
+        let mut db = PredictDb::new();
+        db.add_tles(&tle_dir()).unwrap();
+
+        let gs = test_ground_station();
+        let start = Utc.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap();
+
+        let passes = db.predict_passes(start, end, &gs);
+        for (_id, sat_passes) in &passes {
+            for pass in sat_passes {
+                for obs in pass.observables() {
+                    assert!(obs.elevation() >= 0.0,);
+                }
+            }
+        }
     }
 }
