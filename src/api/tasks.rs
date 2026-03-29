@@ -275,6 +275,8 @@ steps:
                 }],
             },
             tasks_path: tmp.path().to_path_buf(),
+            tle_path: tmp.path().join("tle"),
+            ground_station: None,
         }
     }
 

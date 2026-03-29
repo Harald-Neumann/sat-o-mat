@@ -120,7 +120,7 @@ impl Default for Config {
             ground_station: Some(GroundStation::new(
                 "GS",
                 GroundLocation::try_new(
-                    LonLatAlt::from_degrees(52.52, 13.4, 100.0).unwrap(),
+                    LonLatAlt::from_degrees(13.4, 52.52, 100.0).unwrap(),
                     DynOrigin::Earth,
                 )
                 .unwrap(),

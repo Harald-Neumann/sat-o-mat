@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod error;
+mod predict;
 mod station;
 mod tasks;
 
@@ -10,12 +11,13 @@ use utoipa::{
     Modify, OpenApi,
     openapi::security::{ApiKey, ApiKeyValue, SecurityScheme},
 };
-use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::config::Config;
 
 const TASKS_TAG: &str = "tasks";
 const STATION_TAG: &str = "station";
+const PREDICT_TAG: &str = "predict";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -29,7 +31,8 @@ pub struct AppState {
 #[openapi(
     tags(
         (name = TASKS_TAG, description = "Tasks API"),
-        (name = STATION_TAG, description = "Station API")
+        (name = STATION_TAG, description = "Station API"),
+        (name = PREDICT_TAG, description = "Predictions API")
     ),
     modifiers(&SecurityAddon)
 )]
@@ -60,13 +63,14 @@ pub fn router(config: &Config) -> OpenApiRouter {
         .nest(
             "/api",
             OpenApiRouter::new()
-                .routes(utoipa_axum::routes!(station::get_station))
-                .routes(utoipa_axum::routes!(tasks::list_tasks))
-                .routes(utoipa_axum::routes!(
+                .routes(routes!(station::get_station))
+                .routes(routes!(tasks::list_tasks))
+                .routes(routes!(
                     tasks::get_task,
                     tasks::put_task,
                     tasks::delete_task
-                )),
+                ))
+                .routes(routes!(predict::get_passes)),
         )
         .with_state(state)
 }
