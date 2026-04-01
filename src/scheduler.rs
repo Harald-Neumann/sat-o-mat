@@ -61,9 +61,10 @@ pub async fn run(base: &Path) -> Result<(), Error> {
     let failed_path = base.join("Failed");
     let completed_path = base.join("Completed");
     let artifact_base = base.join("Artifacts");
+    let templates_path = base.join("Templates");
 
     // Create all directories if they do not exist.
-    for dir in [&active_path, &failed_path, &completed_path, &artifact_base] {
+    for dir in [&active_path, &failed_path, &completed_path, &artifact_base, &templates_path] {
         std::fs::create_dir_all(dir)?;
     }
 
@@ -305,7 +306,7 @@ steps:
         tokio::time::sleep(Duration::from_millis(100)).await;
         handle.abort();
 
-        for dir in ["Active", "Failed", "Completed", "Artifacts"] {
+        for dir in ["Active", "Failed", "Completed", "Artifacts", "Templates"] {
             assert!(base.path().join(dir).is_dir(), "{dir} should exist");
         }
     }

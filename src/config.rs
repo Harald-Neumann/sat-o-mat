@@ -85,6 +85,7 @@ pub enum Permission {
     EditTask,
     DeleteTask,
     AutoApproveTask,
+    SubmitFromTemplate,
 }
 
 pub fn load(path: Option<&PathBuf>) -> anyhow::Result<Config> {

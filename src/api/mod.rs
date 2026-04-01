@@ -3,6 +3,7 @@ pub mod error;
 mod predict;
 mod station;
 mod tasks;
+mod templates;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,6 +17,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use crate::config::Config;
 
 const TASKS_TAG: &str = "tasks";
+const TEMPLATES_TAG: &str = "templates";
 const STATION_TAG: &str = "station";
 const PREDICT_TAG: &str = "predict";
 
@@ -31,6 +33,7 @@ pub struct AppState {
 #[openapi(
     tags(
         (name = TASKS_TAG, description = "Tasks API"),
+        (name = TEMPLATES_TAG, description = "Templates API"),
         (name = STATION_TAG, description = "Station API"),
         (name = PREDICT_TAG, description = "Predictions API")
     ),
@@ -70,7 +73,10 @@ pub fn router(config: &Config) -> OpenApiRouter {
                     tasks::put_task,
                     tasks::delete_task
                 ))
-                .routes(routes!(predict::get_passes)),
+                .routes(routes!(predict::get_passes))
+                .routes(routes!(templates::list_templates))
+                .routes(routes!(templates::get_template))
+                .routes(routes!(templates::submit_from_template)),
         )
         .with_state(state)
 }
