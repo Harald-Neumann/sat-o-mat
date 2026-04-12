@@ -3,22 +3,38 @@ use std::{collections::HashMap, fs, io, path::PathBuf};
 use chrono::{DateTime, Utc};
 use lox_space::{
     analysis::{assets::AssetId, visibility::DynPass},
-    frames::providers::DefaultRotationProvider,
+    bodies::DynOrigin,
+    frames::{DynFrame, providers::DefaultRotationProvider},
     orbits::{
         events::{DetectFn, EventsToIntervals, IntervalDetector, RootFindingDetector},
-        orbits::DynTrajectory,
-        propagators::{OrbitSource, sgp4::Sgp4},
+        orbits::{DynOrbit, DynTrajectory},
+        propagators::{
+            OrbitSource,
+            sgp4::{Sgp4, Sgp4Error},
+        },
     },
-    prelude::{GroundStation, Interval, Pass, Propagator, Spacecraft, TimeDelta},
+    prelude::{
+        Cartesian, GroundStation, Interval, Orbit, Pass, Propagator, Spacecraft, Tai, TimeDelta,
+    },
     time::{
         Time,
+        intervals::TimeInterval,
         time_scales::{DynTimeScale, TimeScale},
     },
 };
+use sgp4::Elements;
 use tracing::{info, warn};
 
 pub struct PredictDb {
     spacecraft: HashMap<String, Spacecraft>,
+}
+
+#[derive(thiserror::Error, Clone, Debug)]
+pub enum Error {
+    #[error("unsupported orbit type {0}")]
+    UnsupportedOrbitSource(String),
+    #[error("SGP4 error: {0}")]
+    Sgp4(String),
 }
 
 impl PredictDb {
@@ -36,27 +52,55 @@ impl PredictDb {
         self.spacecraft.contains_key(name)
     }
 
+    pub fn first(&self) -> Option<(&String, &Spacecraft)> {
+        self.spacecraft.iter().next()
+    }
+
+    fn add_from_elements(&mut self, el: &Elements) -> Result<(), Sgp4Error> {
+        let sgp4 = Sgp4::new(el.clone())?;
+        let source = OrbitSource::Sgp4(sgp4);
+        let name = el
+            .object_name
+            .clone()
+            .unwrap_or(format!("ID {}", el.norad_id));
+
+        info!(?name, "loaded spacecraft (SGP4)");
+        self.spacecraft
+            .insert(name.clone(), Spacecraft::new(name.clone(), source));
+
+        Ok(())
+    }
+
     pub fn add_tle(&mut self, text: &str) -> usize {
         sgp4::parse_3les(text)
             .inspect_err(|e| warn!(?e, "error parsing TLE file"))
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|el| match Sgp4::new(el.clone()) {
-                Ok(sgp4) => {
-                    let name = el.object_name.unwrap_or(format!("ID {}", el.norad_id));
-                    Some((name, OrbitSource::Sgp4(sgp4)))
-                }
+            .filter_map(|el| match self.add_from_elements(&el) {
+                Ok(_) => Some(()),
                 Err(e) => {
-                    warn!(?e, "error in TLE elements");
+                    warn!(?e, "error in elements");
                     None
                 }
             })
-            .map(|(name, source)| {
-                self.spacecraft
-                    .insert(name.clone(), Spacecraft::new(name.clone(), source));
-                info!(?name, "loaded spacecraft from TLE");
-            })
             .count()
+    }
+
+    pub fn add_omm(&mut self, omm: &str) -> usize {
+        match serde_json::from_str(omm) {
+            Ok(el) => {
+                if let Err(e) = self.add_from_elements(&el) {
+                    warn!(?e, "error in elements");
+                    0
+                } else {
+                    1
+                }
+            }
+            Err(e) => {
+                warn!(?e, "error parsing CCSDS OMM");
+                0
+            }
+        }
     }
 
     pub fn add_tles(&mut self, dir: &PathBuf) -> Result<usize, io::Error> {
@@ -69,6 +113,50 @@ impl PredictDb {
         Ok(added)
     }
 
+    pub fn add(&mut self, info: &str) -> usize {
+        let mut added = 0;
+        added += self.add_tle(info);
+        added += self.add_omm(info);
+
+        added
+    }
+
+    pub fn state_at(
+        &self,
+        time: DateTime<Utc>,
+        sc: &Spacecraft,
+    ) -> Result<Orbit<Cartesian, DynTimeScale, DynOrigin, DynFrame>, Error> {
+        let name = sc.id().clone().to_string();
+        match sc.orbit() {
+            OrbitSource::Sgp4(sgp4) => Ok(sgp4
+                .state_at(time.into())
+                .map_err(|e| Error::Sgp4(e.to_string()))?
+                .into_dyn()),
+            _ => {
+                warn!(?name, "unsupported orbit type");
+                Err(Error::UnsupportedOrbitSource(name))
+            }
+        }
+    }
+
+    pub fn predict(
+        &self,
+        interval: TimeInterval<Tai>,
+        sc: &Spacecraft,
+    ) -> Result<DynTrajectory, Error> {
+        let name = sc.id().clone().to_string();
+        match sc.orbit() {
+            OrbitSource::Sgp4(sgp4) => Ok(sgp4
+                .propagate(interval)
+                .map_err(|e| Error::Sgp4(e.to_string()))?
+                .into_dyn()),
+            _ => {
+                warn!(?name, "unsupported orbit type");
+                Err(Error::UnsupportedOrbitSource(name))
+            }
+        }
+    }
+
     pub fn predict_trajectories(
         &self,
         start: DateTime<Utc>,
@@ -78,17 +166,9 @@ impl PredictDb {
 
         self.spacecraft
             .values()
-            .filter_map(|sc| {
-                let name = sc.id().clone();
-                match sc.orbit() {
-                    OrbitSource::Sgp4(sgp4) => {
-                        Some((name, sgp4.propagate(interval).unwrap().into_dyn()))
-                    }
-                    _ => {
-                        warn!(?name, "unsupported orbit type");
-                        None
-                    }
-                }
+            .filter_map(|sc| match self.predict(interval, sc) {
+                Ok(t) => Some((sc.id().clone(), t)),
+                Err(_) => None,
             })
             .collect()
     }
