@@ -1598,6 +1598,7 @@ dependencies = [
  "notify",
  "rust-embed",
  "serde",
+ "serde_json",
  "serde_yaml",
  "sgp4",
  "tempfile",
