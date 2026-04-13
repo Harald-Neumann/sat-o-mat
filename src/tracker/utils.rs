@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 #[derive(Clone, Debug, Copy)]
-pub struct Frequency(u64);
+pub struct Frequency(pub u64);
 
 #[derive(Clone, Debug)]
 /// The possible destinations to send tracker output information.
