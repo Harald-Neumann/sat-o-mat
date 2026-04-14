@@ -1,0 +1,121 @@
+.timelineWrapper {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.timelineSection {
+  flex-shrink: 0;
+}
+
+.tableSection {
+  flex: 1;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+
+/* Override react-calendar-timeline styles for dark theme */
+.timelineWrapper :global(.rct-header-root) {
+  background: var(--bg-secondary) !important;
+  border-bottom: 1px solid var(--border);
+}
+
+.timelineWrapper :global(.rct-calendar-header) {
+  border: none !important;
+}
+
+.timelineWrapper :global(.rct-dateHeader) {
+  background: var(--bg-secondary) !important;
+  color: var(--text-secondary) !important;
+  border-left: 1px solid var(--border) !important;
+  border-bottom: none !important;
+  font-size: 12px;
+}
+
+.timelineWrapper :global(.rct-dateHeader-primary) {
+  background: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+  font-weight: 600;
+}
+
+.timelineWrapper :global(.rct-sidebar-row) {
+  background: var(--bg-secondary) !important;
+  border-bottom: 1px solid var(--border) !important;
+  color: var(--text-primary) !important;
+  font-size: 13px;
+  padding: 0 12px !important;
+}
+
+.timelineWrapper :global(.rct-sidebar-row-even) {
+  background: var(--bg-secondary) !important;
+}
+
+.timelineWrapper :global(.rct-horizontal-lines .rct-hl-even),
+.timelineWrapper :global(.rct-horizontal-lines .rct-hl-odd) {
+  background: var(--bg-primary) !important;
+  border-bottom: 1px solid var(--border) !important;
+}
+
+.timelineWrapper :global(.rct-vertical-lines .rct-vl) {
+  border-left: 1px solid var(--border-light) !important;
+}
+
+.timelineWrapper :global(.rct-vertical-lines .rct-vl.rct-day-6),
+.timelineWrapper :global(.rct-vertical-lines .rct-vl.rct-day-0) {
+  background: none !important;
+}
+
+.timelineWrapper :global(.rct-sidebar) {
+  border-right: 1px solid var(--border) !important;
+}
+
+.timelineWrapper :global(.rct-outer) {
+  display: flex !important;
+}
+
+.timelineWrapper :global(.rct-scroll) {
+  background: var(--bg-primary);
+  flex: 1 !important;
+  width: auto !important;
+}
+
+.nowMarker {
+  background: var(--state-failed) !important;
+  width: 2px !important;
+  z-index: 50 !important;
+}
+
+.item {
+  border-radius: 3px;
+  border: none !important;
+  font-size: 12px;
+  overflow: hidden;
+  padding: 0 6px;
+  line-height: 1.8;
+  color: #fff !important;
+}
+
+.itemActive {
+  background: var(--state-active) !important;
+}
+
+.itemPendingApproval {
+  background: var(--state-pending) !important;
+}
+
+.itemCompleted {
+  background: var(--state-completed) !important;
+}
+
+.itemFailed {
+  background: var(--state-failed) !important;
+}
+
+.itemHighlighted {
+  outline: 2px solid #fff !important;
+  outline-offset: -1px;
+  z-index: 100 !important;
+  filter: brightness(1.3);
+}
