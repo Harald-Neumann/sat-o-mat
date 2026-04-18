@@ -5,7 +5,7 @@ import type { Feature, MultiPolygon, Polygon } from 'geojson';
 import landTopo from 'world-atlas/land-110m.json';
 import { fetchGroundTracks } from '../../api/predict';
 import type { GroundTrackPredictions } from '../../api/types';
-import { getColor } from '../SatellitePasses/ElevationChart';
+import { colorForName } from '../../theme/colors';
 import styles from './GroundTrack.module.css';
 
 type Ring = [number, number][];
@@ -64,13 +64,13 @@ function buildEntries(
 ): TrackEntry[] {
   const entries = Object.entries(data.predictions);
   entries.sort(([a], [b]) => a.localeCompare(b));
-  return entries.map(([id, track], idx) => {
+  return entries.map(([id, track]) => {
     const startMs = new Date(track.start).getTime();
     const n = track.longitude.length;
     const stepMs = n > 1 ? (requestEndMs - startMs) / (n - 1) : 0;
     return {
       id,
-      color: getColor(idx),
+      color: colorForName(id),
       startMs,
       stepMs,
       latitude: track.latitude,

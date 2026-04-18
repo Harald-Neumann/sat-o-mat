@@ -8,6 +8,7 @@ import {
   Tooltip,
 } from 'chart.js';
 import type { ApiPass } from '../../api/types';
+import { colorForName } from '../../theme/colors';
 import styles from './SatellitePasses.module.css';
 
 Chart.register(ScatterController, LineElement, PointElement, RadialLinearScale, Tooltip);
@@ -50,6 +51,7 @@ export function PolarPlotDialog({ satellite, pass, onClose }: PolarPlotDialogPro
 
   const maxEl = Math.max(...pass.elevation);
   const maxElIdx = pass.elevation.indexOf(maxEl);
+  const trackColor = colorForName(satellite);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -75,13 +77,13 @@ export function PolarPlotDialog({ satellite, pass, onClose }: PolarPlotDialogPro
             label: 'Track',
             data: trackData,
             showLine: true,
-            borderColor: '#58a6ff',
-            backgroundColor: '#58a6ff18',
+            borderColor: trackColor,
+            backgroundColor: trackColor + '18',
             borderWidth: 2,
             pointRadius: 0,
             pointHitRadius: 6,
             pointHoverRadius: 3,
-            pointHoverBackgroundColor: '#58a6ff',
+            pointHoverBackgroundColor: trackColor,
             fill: false,
             tension: 0.2,
           },
@@ -230,7 +232,7 @@ export function PolarPlotDialog({ satellite, pass, onClose }: PolarPlotDialogPro
       chartRef.current?.destroy();
       chartRef.current = null;
     };
-  }, [pass, maxElIdx, maxEl]);
+  }, [pass, maxElIdx, maxEl, trackColor]);
 
   return (
     <div className={styles.overlay} onClick={onClose}>

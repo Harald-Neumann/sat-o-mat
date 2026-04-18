@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchPasses } from '../../api/predict';
 import type { ApiPass, PassPredictions } from '../../api/types';
-import { ElevationChart, getColor } from './ElevationChart';
+import { ElevationChart } from './ElevationChart';
+import { colorForName } from '../../theme/colors';
 import styles from './SatellitePasses.module.css';
 
 interface SatellitePassesProps {
@@ -18,8 +19,8 @@ interface FlatPass {
 function flattenPasses(data: PassPredictions): FlatPass[] {
   const entries = Object.entries(data.predictions);
   const result: FlatPass[] = [];
-  entries.forEach(([satellite, passes], idx) => {
-    const color = getColor(idx);
+  entries.forEach(([satellite, passes]) => {
+    const color = colorForName(satellite);
     for (const pass of passes) {
       result.push({ satellite, pass, color });
     }
