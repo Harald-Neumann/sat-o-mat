@@ -1,32 +1,21 @@
 use lox_space::{
-    analysis::visibility::DynPass,
     frames::{
         DynFrame,
         providers::DefaultRotationProvider,
         rotations::{DynRotationError, Rotation, TryRotation},
     },
     orbits::{events::DetectFn, orbits::DynTrajectory},
-    prelude::{GroundStation, Interval, Pass, Tai, TimeDelta},
+    prelude::{GroundStation, Interval, Tai, TimeDelta},
     time::{
         Time,
         deltas::ToDelta,
-        intervals::TimeInterval,
         time_scales::{DynTimeScale, TimeScale},
     },
 };
 
-/// A [`TryRotation`] provider that precomputes a rotation between two
-/// frames on a regular time grid and serves linearly interpolated lookups.
-///
-/// Earth rotation varies smoothly at ~15"/s, so a 30-second grid with
-/// linear interpolation yields angular error <<1" — well below pass
-/// geometry tolerances — while skipping the IAU 1980 nutation evaluation
-/// on every sample.
-///
-/// Because this implements [`TryRotation<DynFrame, DynFrame, DynTimeScale>`],
-/// it can be passed directly to [`CartesianOrbit::try_to_frame`] as a
-/// drop-in replacement for [`DefaultRotationProvider`].
-pub struct CachedRotationProvider {
+struct CachedRotationData {
+    start: Time<Tai>,
+    end: Time<Tai>,
     start_delta: TimeDelta,
     step_seconds: f64,
     from: DynFrame,
@@ -34,7 +23,7 @@ pub struct CachedRotationProvider {
     rotations: Vec<Rotation>,
 }
 
-impl CachedRotationProvider {
+impl CachedRotationData {
     pub fn build(
         start: Time<Tai>,
         end: Time<Tai>,
@@ -51,6 +40,8 @@ impl CachedRotationProvider {
             })
             .collect();
         Self {
+            start,
+            end,
             start_delta: start.to_delta(),
             step_seconds,
             from,
@@ -69,6 +60,68 @@ impl CachedRotationProvider {
     }
 }
 
+pub struct CachedRotationProvider {
+    data: Vec<CachedRotationData>,
+}
+
+/// A [`TryRotation`] provider that precomputes a rotation between two
+/// frames on a regular time grid and serves linearly interpolated lookups.
+///
+/// Earth rotation varies smoothly at ~15"/s, so a 30-second grid with
+/// linear interpolation yields angular error <<1" — well below pass
+/// geometry tolerances — while skipping the IAU 1980 nutation evaluation
+/// on every sample.
+///
+/// Because this implements [`TryRotation<DynFrame, DynFrame, DynTimeScale>`],
+/// it can be passed directly to [`CartesianOrbit::try_to_frame`] as a
+/// drop-in replacement for [`DefaultRotationProvider`].
+impl CachedRotationProvider {
+    pub fn new() -> Self {
+        Self { data: vec![] }
+    }
+
+    pub fn ensure_cached_rotation_data(
+        &mut self,
+        origin: DynFrame,
+        target: DynFrame,
+        interval: Interval<Time<DynTimeScale>>,
+    ) {
+        // TODO smarter check for the range
+        // also support partially cached intervals
+        //
+        let start_found = self
+            .get_cached_rotation_data(origin, target, interval.start())
+            .is_some();
+        let end_found = self
+            .get_cached_rotation_data(origin, target, interval.end())
+            .is_some();
+
+        if !start_found || !end_found {
+            self.data.push(CachedRotationData::build(
+                interval.start().with_scale(Tai),
+                interval.end().with_scale(Tai),
+                30.0,
+                origin,
+                target,
+            ));
+        }
+    }
+
+    fn get_cached_rotation_data(
+        &self,
+        origin: DynFrame,
+        target: DynFrame,
+        time: Time<DynTimeScale>,
+    ) -> Option<&CachedRotationData> {
+        self.data.iter().find(|p| {
+            p.from == origin
+                && p.to == target
+                && p.start.into_dyn() <= time
+                && p.end.into_dyn() >= time
+        })
+    }
+}
+
 impl TryRotation<DynFrame, DynFrame, DynTimeScale> for CachedRotationProvider {
     type Error = DynRotationError;
 
@@ -78,17 +131,13 @@ impl TryRotation<DynFrame, DynFrame, DynTimeScale> for CachedRotationProvider {
         target: DynFrame,
         time: Time<DynTimeScale>,
     ) -> Result<Rotation, Self::Error> {
-        if origin == target {
-            return Ok(Rotation::IDENTITY);
-        }
+        let Some(data) = self.get_cached_rotation_data(origin, target, time) else {
+            // No cached data, return error
+            panic!();
+        };
+
         let delta = time.to_delta();
-        if origin == self.from && target == self.to {
-            Ok(self.get(delta))
-        } else if origin == self.to && target == self.from {
-            Ok(self.get(delta).transpose())
-        } else {
-            DefaultRotationProvider.try_rotation(origin, target, time)
-        }
+        Ok(data.get(delta))
     }
 }
 
@@ -103,52 +152,9 @@ fn lerp_rotation(a: &Rotation, b: &Rotation, t: f64) -> Rotation {
         dm: a.dm * s + b.dm * t,
     }
 }
-
-/// Equivalent to [`DynPass::from_interval`] but accepts a custom
-/// rotation provider. This avoids the IAU 1980 nutation evaluation on
-/// every sample by using [`CachedRotationProvider`].
-///
-/// When upstream adds a provider parameter to `Pass::from_interval`,
-/// this function can be replaced by a direct call.
-pub(super) fn sample_pass(
-    pass_interval: TimeInterval<Tai>,
-    step_seconds: i64,
-    gs: &GroundStation,
-    trajectory: &DynTrajectory,
-    provider: &CachedRotationProvider,
-) -> Option<DynPass> {
-    let step = TimeDelta::from_seconds(step_seconds);
-    let body_fixed_frame = gs.body_fixed_frame();
-    let mut times = Vec::new();
-    let mut observables = Vec::new();
-
-    for t in pass_interval.step_by(step) {
-        let state = trajectory.interpolate_at(t.into_dyn());
-        let state_bf = state.try_to_frame(body_fixed_frame, provider).unwrap();
-        let obs = gs.location().observables_dyn(state_bf);
-
-        let min_elev = gs.mask().min_elevation(obs.azimuth());
-        if obs.elevation() >= min_elev {
-            times.push(t.into_dyn());
-            observables.push(obs);
-        }
-    }
-
-    if times.is_empty() {
-        return None;
-    }
-
-    let interval_dyn = Interval::new(
-        pass_interval.start().into_dyn(),
-        pass_interval.end().into_dyn(),
-    );
-    Pass::try_new(interval_dyn, times, observables).ok()
-}
-
 pub(super) struct SimpleElevationDetector<'a> {
     pub gs: &'a GroundStation,
     pub trajectory: &'a DynTrajectory,
-    pub provider: &'a CachedRotationProvider,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -160,7 +166,7 @@ impl<'a, T: TimeScale + Into<DynTimeScale>> DetectFn<T> for SimpleElevationDetec
     fn eval(&self, time: Time<T>) -> Result<f64, Self::Error> {
         let state = self.trajectory.interpolate_at(time.into_dyn());
         let state_bf = state
-            .try_to_frame(self.gs.body_fixed_frame(), self.provider)
+            .try_to_frame(self.gs.body_fixed_frame(), &DefaultRotationProvider)
             .unwrap();
 
         Ok(self

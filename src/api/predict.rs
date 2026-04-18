@@ -74,7 +74,7 @@ pub async fn get_passes(
         .ok_or(ApiError::Internal)?;
 
     let predictions = predict_db
-        .predict_passes(start, end, gs)
+        .predict_passes(start, end, gs, None)
         .into_iter()
         .map(|(id, passes)| {
             let passes = passes

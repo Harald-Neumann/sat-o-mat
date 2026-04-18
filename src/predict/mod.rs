@@ -2,7 +2,10 @@ use std::{collections::HashMap, fs, io, path::PathBuf};
 
 use chrono::{DateTime, Utc};
 use lox_space::{
-    analysis::{assets::AssetId, visibility::DynPass},
+    analysis::{
+        assets::AssetId,
+        visibility::{DynPass, ElevationMask},
+    },
     bodies::DynOrigin,
     frames::DynFrame,
     orbits::{
@@ -16,16 +19,12 @@ use lox_space::{
     prelude::{
         Cartesian, GroundStation, Interval, Orbit, Pass, Propagator, Spacecraft, Tai, TimeDelta,
     },
-    time::{
-        Time,
-        intervals::TimeInterval,
-        time_scales::DynTimeScale,
-    },
+    time::{Time, intervals::TimeInterval, time_scales::DynTimeScale},
 };
 use sgp4::Elements;
 use tracing::{info, warn};
 
-use utils::{CachedRotationProvider, SimpleElevationDetector, sample_pass};
+use utils::{CachedRotationProvider, SimpleElevationDetector};
 
 mod utils;
 
@@ -165,13 +164,32 @@ impl PredictDb {
         &self,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
+        target_frame: DynFrame,
+        provider: Option<&mut CachedRotationProvider>,
     ) -> HashMap<AssetId, DynTrajectory> {
+        let mut default_provider = CachedRotationProvider::new();
+        let provider = provider.unwrap_or(&mut default_provider);
+
         let interval = Interval::new(start.into(), end.into());
 
         self.spacecraft
             .values()
             .filter_map(|sc| match self.predict(interval, sc) {
-                Ok(t) => Some((sc.id().clone(), t)),
+                Ok(trajectory) => {
+                    // Valid trajectory
+
+                    // Create rotation data cache (if it does not exist)
+                    provider.ensure_cached_rotation_data(
+                        trajectory.reference_frame(),
+                        target_frame,
+                        Interval::new(trajectory.start_time(), trajectory.end_time()),
+                    );
+
+                    // Transform trajectory to requested frame using cache
+                    let t = trajectory.into_frame(target_frame, provider).unwrap();
+
+                    Some((sc.id().clone(), t))
+                }
                 Err(_) => None,
             })
             .collect()
@@ -182,41 +200,18 @@ impl PredictDb {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
         gs: &GroundStation,
+        provider: Option<&mut CachedRotationProvider>,
     ) -> HashMap<AssetId, Vec<DynPass>> {
         let tai_start: Time<Tai> = start.into();
         let tai_end: Time<Tai> = end.into();
         let interval = Interval::new(tai_start, tai_end);
-        let target_frame = gs.body_fixed_frame();
+        let frame = gs.body_fixed_frame();
 
-        // Providers are keyed by trajectory frame via linear scan. In
-        // practice all SGP4 trajectories share `DynFrame::Teme`, so we
-        // build one provider per request rather than once per satellite.
-        let mut providers: Vec<(DynFrame, CachedRotationProvider)> = Vec::new();
-
-        self.predict_trajectories(start, end)
+        self.predict_trajectories(start, end, frame, provider)
             .iter()
             .map(|(sc, trajectory)| {
-                let from = trajectory.reference_frame();
-                if !providers.iter().any(|(f, _)| *f == from) {
-                    providers.push((
-                        from,
-                        CachedRotationProvider::build(
-                            tai_start,
-                            tai_end,
-                            30.0,
-                            from,
-                            target_frame,
-                        ),
-                    ));
-                }
-                let provider = &providers.iter().find(|(f, _)| *f == from).unwrap().1;
-
                 let detector = EventsToIntervals::new(RootFindingDetector::new(
-                    SimpleElevationDetector {
-                        gs,
-                        trajectory,
-                        provider,
-                    },
+                    SimpleElevationDetector { gs, trajectory },
                     TimeDelta::from_seconds(60),
                 ));
 
@@ -224,8 +219,19 @@ impl PredictDb {
                     .detect(interval)
                     .unwrap()
                     .into_iter()
-                    .map(|pass_interval| {
-                        sample_pass(pass_interval, 20, gs, trajectory, provider).unwrap()
+                    .filter_map(|pass_interval| {
+                        DynPass::from_interval(
+                            // todo: pass_interval.into_dyn()
+                            Interval::new(
+                                pass_interval.start().into_dyn(),
+                                pass_interval.end().into_dyn(),
+                            ),
+                            TimeDelta::from_seconds(20),
+                            gs.location(),
+                            &ElevationMask::with_fixed_elevation(0.0),
+                            trajectory,
+                            gs.body_fixed_frame(),
+                        )
                     })
                     .collect();
 
@@ -296,7 +302,7 @@ mod tests {
         let start = Utc.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap();
         let end = Utc.with_ymd_and_hms(2026, 1, 15, 1, 0, 0).unwrap();
 
-        let trajectories = db.predict_trajectories(start, end);
+        let trajectories = db.predict_trajectories(start, end, DynFrame::J2000, None);
         assert_eq!(trajectories.len(), db.len());
     }
 
@@ -309,7 +315,7 @@ mod tests {
         let start = Utc.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap();
         let end = Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap();
 
-        let passes = db.predict_passes(start, end, &gs);
+        let passes = db.predict_passes(start, end, &gs, None);
         assert!(!passes.is_empty());
     }
 
@@ -322,7 +328,7 @@ mod tests {
         let start = Utc.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap();
         let end = Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap();
 
-        let passes = db.predict_passes(start, end, &gs);
+        let passes = db.predict_passes(start, end, &gs, None);
         for (_id, sat_passes) in &passes {
             for pass in sat_passes {
                 for obs in pass.observables() {
