@@ -33,7 +33,14 @@ fn bench_predict_passes(c: &mut Criterion) {
     let end = Utc.with_ymd_and_hms(2026, 1, 16, 0, 0, 0).unwrap();
 
     c.bench_function("predict_passes_nanoff_1day", |b| {
-        b.iter(|| db.predict_passes(black_box(start), black_box(end), black_box(&gs)))
+        b.iter(|| {
+            db.predict_passes(
+                black_box(start),
+                black_box(end),
+                black_box(&gs),
+                black_box(None),
+            )
+        })
     });
 }
 
