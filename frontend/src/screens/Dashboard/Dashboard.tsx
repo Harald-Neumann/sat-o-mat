@@ -7,6 +7,7 @@ import { TaskTimeline } from '../../components/Timeline/TaskTimeline';
 import { TaskModal, type TaskModalMode } from '../../components/TaskModal/TaskModal';
 import { SatellitePasses } from '../../components/SatellitePasses/SatellitePasses';
 import { PolarPlotDialog } from '../../components/SatellitePasses/PolarPlotDialog';
+import { GroundTrack } from '../../components/GroundTrack/GroundTrack';
 import { WidgetGrid, type Widget } from '../../components/WidgetGrid/WidgetGrid';
 import styles from './Dashboard.module.css';
 
@@ -40,6 +41,12 @@ export function Dashboard() {
 
   const widgets: Widget[] = [
     {
+      key: 'ground-track',
+      title: 'Ground Track',
+      content: <GroundTrack />,
+      layout: { i: 'ground-track', x: 0, y: 0, w: 12, h: 8, minH: 5 },
+    },
+    {
       key: 'timeline',
       title: 'Schedule',
       headerActions: (
@@ -59,7 +66,7 @@ export function Dashboard() {
           onTimeRangeChange={setTimeRange}
         />
       ),
-      layout: { i: 'timeline', x: 0, y: 0, w: 12, h: 8, minH: 5 },
+      layout: { i: 'timeline', x: 0, y: 8, w: 6, h: 8, minH: 5 },
     },
     {
       key: 'passes',
@@ -70,7 +77,7 @@ export function Dashboard() {
           onPassSelect={(satellite, pass) => setSelectedPass({ satellite, pass })}
         />
       ),
-      layout: { i: 'passes', x: 0, y: 8, w: 12, h: 7, minH: 4 },
+      layout: { i: 'passes', x: 6, y: 8, w: 6, h: 8, minH: 4 },
     },
   ];
 

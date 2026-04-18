@@ -17,3 +17,13 @@ export interface ApiPass {
 export interface PassPredictions {
   predictions: Record<string, ApiPass[]>;
 }
+
+export interface ApiGroundTrack {
+  start: string;
+  latitude: number[];
+  longitude: number[];
+}
+
+export interface GroundTrackPredictions {
+  predictions: Record<string, ApiGroundTrack>;
+}
