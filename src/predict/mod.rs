@@ -7,6 +7,7 @@ use lox_space::{
         visibility::{DynPass, ElevationMask},
     },
     bodies::DynOrigin,
+    core::coords::LonLatAlt,
     frames::DynFrame,
     orbits::{
         events::{EventsToIntervals, IntervalDetector, RootFindingDetector},
@@ -236,6 +237,35 @@ impl PredictDb {
                     .collect();
 
                 (sc.clone(), passes)
+            })
+            .collect()
+    }
+
+    pub fn predict_ground_track(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        provider: Option<&mut CachedRotationProvider>,
+    ) -> HashMap<AssetId, Vec<(Time<Tai>, LonLatAlt)>> {
+        let frame = DynFrame::Iau(DynOrigin::Earth);
+
+        self.predict_trajectories(start, end, frame, provider)
+            .iter()
+            .map(|(sc, trajectory)| {
+                (
+                    sc.clone(),
+                    trajectory
+                        .times()
+                        .into_iter()
+                        .zip(trajectory.states())
+                        .filter_map(|(t, state)| {
+                            state
+                                .try_to_ground_location()
+                                .map(|gl| (t.with_scale(Tai), gl.coordinates()))
+                                .ok()
+                        })
+                        .collect(),
+                )
             })
             .collect()
     }

@@ -74,6 +74,7 @@ pub fn router(config: &Config) -> OpenApiRouter {
                     tasks::delete_task
                 ))
                 .routes(routes!(predict::get_passes))
+                .routes(routes!(predict::get_ground_track))
                 .routes(routes!(templates::list_templates))
                 .routes(routes!(templates::get_template))
                 .routes(routes!(templates::submit_from_template)),

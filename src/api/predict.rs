@@ -13,7 +13,7 @@ use crate::{api::error::ApiError, predict::PredictDb};
 use super::AppState;
 
 #[derive(Debug, Deserialize, IntoParams)]
-pub struct PassesQuery {
+pub struct PredictQuery {
     /// Start time as RFC3339. Defaults to now.
     #[param(value_type = Option<String>)]
     pub start: Option<DateTime<Utc>>,
@@ -39,12 +39,27 @@ pub struct ApiPass {
     elevation: Vec<f64>,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct GroundTrackPredictions {
+    predictions: HashMap<String, ApiGroundTrack>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ApiGroundTrack {
+    /// Start time formatted as RFC3339
+    start: String,
+    /// Latitude in degrees
+    latitude: Vec<f64>,
+    /// Longitude in degrees
+    longitude: Vec<f64>,
+}
+
 /// Get pass predictions.
 #[utoipa::path(
     get,
     path = "/predict/passes",
     tag = super::PREDICT_TAG,
-    params(PassesQuery),
+    params(PredictQuery),
     responses(
         (status = 200, description = "Pass predictions", body = PassPredictions),
         (status = 400, description = "Invalid parameters"),
@@ -52,7 +67,7 @@ pub struct ApiPass {
 )]
 pub async fn get_passes(
     State(state): State<AppState>,
-    Query(query): Query<PassesQuery>,
+    Query(query): Query<PredictQuery>,
 ) -> Result<Json<PassPredictions>, ApiError> {
     let start = query.start.unwrap_or_else(Utc::now);
     let end = query.end.unwrap_or_else(|| start + Duration::hours(24));
@@ -106,4 +121,55 @@ pub async fn get_passes(
         .collect();
 
     Ok(Json(PassPredictions { predictions }))
+}
+
+/// Get ground track predictions.
+#[utoipa::path(
+    get,
+    path = "/predict/ground_track",
+    tag = super::PREDICT_TAG,
+    params(PredictQuery),
+    responses(
+        (status = 200, description = "Ground track predictions", body = GroundTrackPredictions),
+        (status = 400, description = "Invalid parameters"),
+    ),
+)]
+pub async fn get_ground_track(
+    State(state): State<AppState>,
+    Query(query): Query<PredictQuery>,
+) -> Result<Json<GroundTrackPredictions>, ApiError> {
+    let start = query.start.unwrap_or_else(Utc::now);
+    let end = query.end.unwrap_or_else(|| start + Duration::hours(24));
+
+    if end <= start {
+        return Err(ApiError::BadRequest("end must be after start".to_string()));
+    }
+
+    let mut predict_db = PredictDb::new();
+    let count = predict_db
+        .add_tles(&state.config.tle_path)
+        .map_err(|_| ApiError::Internal)?;
+    info!(?count, "satellites loaded");
+
+    let predictions = predict_db
+        .predict_ground_track(start, end, None)
+        .into_iter()
+        .map(|(id, track)| {
+            let (lats, lons) = track
+                .into_iter()
+                .map(|(_, lla)| (lla.lat().to_degrees(), lla.lon().to_degrees()))
+                .collect();
+
+            (
+                id.to_string(),
+                ApiGroundTrack {
+                    start: start.to_rfc3339(),
+                    latitude: lats,
+                    longitude: lons,
+                },
+            )
+        })
+        .collect();
+
+    Ok(Json(GroundTrackPredictions { predictions }))
 }
