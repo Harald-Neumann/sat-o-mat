@@ -76,17 +76,13 @@ pub async fn get_passes(
         return Err(ApiError::BadRequest("end must be after start".to_string()));
     }
 
-    let mut predict_db = PredictDb::new();
-    let count = predict_db
-        .add_tles(&state.config.tle_path)
-        .map_err(|_| ApiError::Internal)?;
-    info!(?count, "satellites loaded");
-
     let gs = state
         .config
         .ground_station
         .as_ref()
         .ok_or(ApiError::Internal)?;
+
+    let predict_db = state.predict_db.lock().await;
 
     let predictions = predict_db
         .predict_passes(start, end, gs, None)
@@ -145,11 +141,7 @@ pub async fn get_ground_track(
         return Err(ApiError::BadRequest("end must be after start".to_string()));
     }
 
-    let mut predict_db = PredictDb::new();
-    let count = predict_db
-        .add_tles(&state.config.tle_path)
-        .map_err(|_| ApiError::Internal)?;
-    info!(?count, "satellites loaded");
+    let predict_db = state.predict_db.lock().await;
 
     let predictions = predict_db
         .predict_ground_track(start, end, None)

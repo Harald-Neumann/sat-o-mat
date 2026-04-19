@@ -8,6 +8,9 @@ mod templates;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use sat_o_mat::predict::PredictDb;
+use tokio::sync::Mutex;
+use tracing::info;
 use utoipa::{
     Modify, OpenApi,
     openapi::security::{ApiKey, ApiKeyValue, SecurityScheme},
@@ -25,6 +28,7 @@ const PREDICT_TAG: &str = "predict";
 pub struct AppState {
     pub tasks_path: PathBuf,
     pub config: Arc<Config>,
+    pub predict_db: Arc<Mutex<PredictDb>>,
 }
 
 // --- OpenAPI ---
@@ -57,9 +61,14 @@ impl Modify for SecurityAddon {
 // --- Router ---
 
 pub fn router(config: &Config) -> OpenApiRouter {
+    let mut predict = PredictDb::new();
+    let count = predict.add_tles(&config.tle_path).unwrap();
+    info!(?count, "satellites loaded");
+
     let state = AppState {
         tasks_path: config.tasks_path.clone(),
         config: Arc::new(config.clone()),
+        predict_db: Arc::new(Mutex::new(predict)),
     };
 
     OpenApiRouter::with_openapi(ApiDoc::openapi())
