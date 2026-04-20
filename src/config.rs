@@ -96,16 +96,23 @@ pub fn load(path: Option<&PathBuf>) -> anyhow::Result<Config> {
 
     if !fs::exists(config_path)? {
         info!("Creating default config file");
+        let config = Config::default();
         fs::create_dir_all(config_path.parent().unwrap())?;
-        fs::write(config_path, serde_yaml::to_string(&Config::default())?)?;
+        fs::write(config_path, serde_yaml::to_string(&config)?)?;
     }
 
-    serde_yaml::from_str(
+    let config: Config = serde_yaml::from_str(
         fs::read_to_string(config_path)
             .context(format!("Error reading config file {:?}", config_path))?
             .as_ref(),
     )
-    .context("Error parsing Config file")
+    .context("Error parsing Config file")?;
+
+    // Create folders referenced in the config
+    fs::create_dir_all(&config.tle_path)?;
+    fs::create_dir_all(&config.tasks_path)?;
+
+    Ok(config)
 }
 
 impl Default for Config {
