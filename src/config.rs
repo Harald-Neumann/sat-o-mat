@@ -122,7 +122,19 @@ impl Default for Config {
 
         Self {
             station_name: "Sat-o-Mat Test Station".to_string(),
-            api: ApiConfig { keys: Vec::new() },
+            api: ApiConfig {
+                keys: vec![ApiKey {
+                    key: "sk_test_admin".to_string(),
+                    permissions: vec![
+                        Permission::ViewTasks,
+                        Permission::SubmitTask,
+                        Permission::EditTask,
+                        Permission::DeleteTask,
+                        Permission::AutoApproveTask,
+                        Permission::SubmitFromTemplate,
+                    ],
+                }],
+            },
             tasks_path: base.join("tasks"),
             tle_path: base.join("tle"),
             ground_station: Some(GroundStation::new(
