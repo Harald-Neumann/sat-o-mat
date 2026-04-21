@@ -63,14 +63,22 @@ enum Commands {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    tracing_subscriber::registry()
-        .with(fmt::layer())
+    let use_json_logging = std::env::var("SAT_O_MAT_LOGGING_FMT")
+        .map(|v| v.eq_ignore_ascii_case("json"))
+        .unwrap_or(false);
+
+    let registry = tracing_subscriber::registry()
         .with(
             EnvFilter::builder()
                 .with_default_directive(LevelFilter::INFO.into())
                 .from_env_lossy(),
-        )
-        .init();
+        );
+
+    if use_json_logging {
+        registry.with(fmt::layer().json()).init();
+    } else {
+        registry.with(fmt::layer()).init();
+    };
 
     let config = config::load(args.config.as_ref())?;
     info!(?config);
